@@ -20,17 +20,19 @@
 #include <pcl/segmentation/euclidean_cluster_comparator.h>
 #include <pcl/segmentation/extract_clusters.h>
 
+#include <limits>
+
 #define NUM_COMMAND_ARGS 1
 
 bool openCloud(pcl::PointCloud<pcl::PointXYZRGBA>::Ptr &cloudOut, const char* fileName);
 void pointPickingCallback(const pcl::visualization::PointPickingEvent& event, void* cookie);
 void keyboardCallback(const pcl::visualization::KeyboardEvent &event, void* viewer_void);
-pcl::ModelCoefficients::Ptr segmentPlane(const pcl::PointCloud<pcl::PointXYZRGBA>::ConstPtr &cloudIn, pcl::PointIndices::Ptr &inliers, double distanceThreshold, int maxIterations);
+pcl::ModelCoefficients::Ptr segmentPlane(const pcl::PointCloud<pcl::PointXYZRGBA>::Ptr &cloudIn, pcl::PointIndices::Ptr &inliers, double distanceThreshold, int maxIterations);
 void removePoints(const pcl::PointCloud<pcl::PointXYZRGBA>::Ptr &cloudIn, const pcl::PointCloud<pcl::PointXYZRGBA>::Ptr &cloudOut, const pcl::PointIndices::ConstPtr &inliers);
 pcl::PointCloud<pcl::PointXYZRGBA>::Ptr copyCloud(const pcl::PointCloud<pcl::PointXYZRGBA>::Ptr &cloud);
 
 int main(int argc, char** argv) {
-
+    
     if(argc != NUM_COMMAND_ARGS + 1) {
         std::cout << "USAGE: " << argv[0] << " " << "<file_name>" << std::endl;
     }
@@ -48,31 +50,31 @@ int main(int argc, char** argv) {
     pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloudResult(new pcl::PointCloud<pcl::PointXYZRGBA>);
 
 
+
     // *** Begin Processing image ***
 
 
-    // segment the table surface
-    float distanceThreshold = 0.015; // the maximum distance allowed from a point to the fitted plane for that point to be considered an inlier
+
+    // the maximum distance allowed from a point to the fitted plane for that point to be considered an inlier
+    float distanceThreshold = 0.015;
     int maxIterations = 5000;
 
     // pcl::PointIndices is a PCL ds used to store a list of indices representing inliers of a point cloud
-    // inliers is a smart pointer that points to the newly allocated pcl::PointIndices object
-    // inliers is used to store the indices of points that belong to a particular plane detected during plane seg using RANSAC
-
+    // tableInliers is a smart pointer that points to the newly allocated pcl::PointIndices object
+    // tableInliers is used to store the indices of points that belong to the table surface plane detected during RANSAC
     pcl::PointIndices::Ptr tableInliers(new pcl::PointIndices);
+
+    // We are recieving smart Ptr to a ModelCoefficients object that hold the equation of our detected plane
     pcl::ModelCoefficients::Ptr tableCoefficients = segmentPlane(cloud, tableInliers, distanceThreshold, maxIterations);
-    const float tableDistance = tableCoefficients->values[3];
+    const float distanceToTable = tableCoefficients->values[3];
 
-    std::cout << "Seg Results: " << tableInliers->indices.size() << " points" << std::endl;
-    std::cout << "Camera to Table Distance = " << tableDistance << std::endl;
-
+    // color and copy points to resultCloud
     for(int i = 0; i < tableInliers->indices.size(); i++) {
         
-        // retrieving the index of the current inlier point. This index corresponds to a specific
-        // point in the original point cloud
+        // tableInliers->indicies stores indexes that map us to points in cloud
         int index = tableInliers->indices.at(i);
 
-        // make the table plane blue in our original cloud
+        // color the plane points blue
         cloud->points.at(index).r = 0;
         cloud->points.at(index).g = 0;
         cloud->points.at(index).b = 255;
@@ -82,8 +84,9 @@ int main(int argc, char** argv) {
     }
 
 
-    // remove the table plane points so we do not detect the same plane again. Less computations for RANSAC
+    // remove the table plane points so we do not detect the same plane again (Less computations for RANSAC)
     pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloudFiltered(new pcl::PointCloud<pcl::PointXYZRGBA>);
+    // cloudFiltered now contains no table plane
     removePoints(cloud, cloudFiltered, tableInliers);
 
 
@@ -94,8 +97,6 @@ int main(int argc, char** argv) {
     voxFilter.setInputCloud(cloudFiltered);
     voxFilter.setLeafSize(static_cast<float>(voxelSize), static_cast<float>(voxelSize), static_cast<float>(voxelSize));
     voxFilter.filter(*cloudDownSampled);
-    std::cout << "Points before: " << cloudFiltered->points.size() << std::endl;
-    std::cout << "Points after: " << cloudDownSampled->points.size() << std::endl;
 
     
     const float clusterDistance = 0.01; // claiming that all boxes we are looking for are a minimum of 1cm apart
@@ -103,7 +104,7 @@ int main(int argc, char** argv) {
     int maxClusterSize = 100000;
 
 
-    // we have a vector of vectors of indicies. If we find 3 clusters in our pc, cluster indicies will have
+    // We have a vector of vectors of indicies. If we find 3 clusters in our pc, cluster indicies will have
     // 3 elements, and each one of those elements is a list of integer indices pointing back to the original cloud
     std::vector<pcl::PointIndices> clusterIndices;
 
@@ -117,101 +118,77 @@ int main(int argc, char** argv) {
     ec.setMaxClusterSize(maxClusterSize);
     ec.setSearchMethod(tree);
     ec.setInputCloud(cloudDownSampled);
-
-    // perform the clustering on the cloud that is filtered
     ec.extract(clusterIndices);
-    std::cout << "Clusters identified: " << clusterIndices.size() << std::endl;
 
+    
 
-    for(int i = 0; i < clusterIndices.size(); i++) {
-        int r,g,b;
-
-        if(i == 0) {
-            r = 0;
-            g = 0;
-            b = 255;
-        }
-        else if(i == 1){
-            r = 255;
-            g = 255;
-            b = 255;
-        }
-        else if(i == 2) {
-            r = 0;
-            g = 255;
-            b = 0;
-        }
-        else{
-            r = 255;
-            g = 0;
-            b = 0;
-        }
-        std::cout << "Cluster " << i << " size: " << clusterIndices.at(i).indices.size() << ", color: " << r << " " << g << " " << b << std::endl;
-
-        // for each point within a specific cluster, we are giving it a random color
-        for(int j = 0; j < clusterIndices.at(i).indices.size(); j++) {
-            cloudDownSampled->points.at(clusterIndices.at(i).indices.at(j)).r = r;
-            cloudDownSampled->points.at(clusterIndices.at(i).indices.at(j)).g = g;
-            cloudDownSampled->points.at(clusterIndices.at(i).indices.at(j)).b = b;
-        }
-    }
-
-    // At this point each of our boxes are identified as a cluster and all noise is filtered out,
-    // time to fit them to a plane, and calculate their L, W, H
-
-    pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloudTemp(new pcl::PointCloud<pcl::PointXYZRGBA>);
-
-    // fit planes to each of our box surfaces and calculate dimensions
+    // At this point each of our boxes are identified as a cluster within clusterIndices and all noise is filtered out,
+    // Iterate through each of our identified clusters
     for(int i = 0; i < clusterIndices.size(); i++) {
 
-        // select a cluster that resembles a box surface
-        pcl::PointIndices::Ptr clusterInliersInput(new pcl::PointIndices(clusterIndices[i]));
+        // Select a cluster (represents a box surface)
+        pcl::PointIndices::Ptr clusterInliers(new pcl::PointIndices(clusterIndices[i]));
 
-        // the output from detecting a plane
-        pcl::PointIndices::Ptr clusterInliersOutput(new pcl::PointIndices);
+        // The output from detecting a plane
+        pcl::PointIndices::Ptr resultantInliers(new pcl::PointIndices);
         pcl::ModelCoefficients::Ptr clusterCoeffs(new pcl::ModelCoefficients);
 
+        // Performinag plane segmentation 
         pcl::SACSegmentation<pcl::PointXYZRGBA> seg;
         seg.setOptimizeCoefficients(true);
+        seg.setInputCloud(cloudDownSampled);
         seg.setModelType(pcl::SACMODEL_PLANE);
         seg.setMethodType(pcl::SAC_RANSAC);
-        seg.setInputCloud(cloudDownSampled);
         seg.setMaxIterations(5000);
         seg.setDistanceThreshold(0.0254);
-        seg.setIndices(clusterInliersInput);
-        seg.segment(*clusterInliersOutput, *clusterCoeffs);
+        seg.setIndices(clusterInliers);
+        seg.segment(*resultantInliers, *clusterCoeffs);
 
-        int r,g,b;
+        // track our x,y min/max for each box surface
+        float minX = std::numeric_limits<float>::max(), maxX = std::numeric_limits<float>::lowest();
+        float minY = std::numeric_limits<float>::max(), maxY = std::numeric_limits<float>::lowest();
+        float planeHeight = clusterCoeffs->values[3];
 
-        // draw the points of our detected plane onto the result
-        for(int j = 0; j < clusterInliersInput->indices.size(); j++) {
-            int index = clusterInliersInput->indices.at(j);
+        // Draw the points of our detected plane onto the resultCloud with appropriate colors
+        // and determine min/max x and y values
+        for(int j = 0; j < resultantInliers->indices.size(); j++) {
 
-            if(i == 0) {
-                r = 0;
-                g = 255;
-                b = 0;
-            }
-            else {
-                r = 255;
-                g = 0;
-                b = 0;
-            }
+            int index = resultantInliers->indices.at(j);
 
-            cloudDownSampled->points.at(index).r = r;
-            cloudDownSampled->points.at(index).g = g;
-            cloudDownSampled->points.at(index).b = b;
+            // First box will be green, second will be red 
+            cloudDownSampled->points.at(index).r = (i == 0 ? 0 : 255);
+            cloudDownSampled->points.at(index).g = (i == 0 ? 255 : 0);
+            cloudDownSampled->points.at(index).b = 0;
+
+            // Grab the x,y value for the current point
+            float currX = cloudDownSampled->points.at(index).x;
+            float currY = cloudDownSampled->points.at(index).y;
+
+            // Update largest and smallest points
+            if(currX < minX) minX = currX; 
+            if(currX > maxX) maxX = currX;
+            if(currY < minY) minY = currY;
+            if(currY > maxY) maxY = currY;
 
             // take the identified box plane and move to result cloud
             cloudResult->points.push_back(cloudDownSampled->points.at(index));
+            //std::cout << "Point " << j << ": " << cloudDownSampled->points.at(index) << std::endl;
+
         }
+
+        float length = maxX - minX;
+        float width = maxY - minY;
+        float height = distanceToTable - planeHeight;
 
         std::cout << '\n' << std::endl;
         std::cout << "cluster indices size: " << clusterIndices.size() << std::endl;
-        std::cout << "cluster color: " << r << ", " << g << ", " << b << std::endl;
-        std::cout << "clusterInliersInput size: " << clusterInliersInput->indices.size() << std::endl;
-        std::cout << "clusterInliersOutput size: " << clusterInliersOutput->indices.size() << std::endl;
-        std::cout << "Height: " << tableDistance - clusterCoeffs->values[3] << std::endl; 
+        std::cout << "clusterInliers size: " << clusterInliers->indices.size() << std::endl;
+        std::cout << "resultantInliers size: " << resultantInliers->indices.size() << std::endl;
+        std::cout << "Min X: " << minX << std::endl;
+        std::cout << "Max X: " << maxX << std::endl;
+        std::cout << "Min Y: " << minY << std::endl;
+        std::cout << "Max Y: " << maxY << std::endl;
+        std::cout << "BOX " << i+1 << ": " << length << " " << width << " " << height << std::endl;
         std::cout << '\n' << std::endl;
     }
 
@@ -242,8 +219,8 @@ int main(int argc, char** argv) {
 }
 
 // The func will populate inliers with with the indicies of the inliers found during plane seg allowing us
-// to access the inlier points in the original point cloud
-pcl::ModelCoefficients::Ptr segmentPlane(const pcl::PointCloud<pcl::PointXYZRGBA>::ConstPtr &cloudIn, pcl::PointIndices::Ptr &inliers, double distanceThreshold, int maxIterations) {
+// to access the points in the original point cloud
+pcl::ModelCoefficients::Ptr segmentPlane(const pcl::PointCloud<pcl::PointXYZRGBA>::Ptr &cloudIn, pcl::PointIndices::Ptr &inliers, double distanceThreshold, int maxIterations) {
 
     // Object to store the model coefficients (the plane equation parameters) of the detected plane
     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
@@ -272,9 +249,12 @@ void removePoints(const pcl::PointCloud<pcl::PointXYZRGBA>::Ptr &cloudIn, const 
     pcl::ExtractIndices<pcl::PointXYZRGBA> extract;
     extract.setInputCloud(cloudIn);
     extract.setIndices(inliers);
-    // true = ExtractIndicies will extract the points that are Not part of the inliers
-    // The extracted points will be those outside the detected plane
+    
+    // Filter is discarding the points specified by the indices and is keeping all other points
+    // We are removing a detected plane from cloudIn
     extract.setNegative(true);
+
+    // cloudOut now contains all points except the points specified by inliers
     extract.filter(*cloudOut);
 }
 
