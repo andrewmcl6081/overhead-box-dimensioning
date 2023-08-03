@@ -50,9 +50,7 @@ int main(int argc, char** argv) {
     pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloudResult(new pcl::PointCloud<pcl::PointXYZRGBA>);
 
 
-
     // *** Begin Processing image ***
-
 
 
     // the maximum distance allowed from a point to the fitted plane for that point to be considered an inlier
@@ -84,13 +82,13 @@ int main(int argc, char** argv) {
     }
 
 
-    // remove the table plane points so we do not detect the same plane again (Less computations for RANSAC)
+    // *Extract Table Plane*
+    // We do not want to detect the same plane again (Less computations for RANSAC)
     pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloudFiltered(new pcl::PointCloud<pcl::PointXYZRGBA>);
-    // cloudFiltered now contains no table plane
-    removePoints(cloud, cloudFiltered, tableInliers);
+    removePoints(cloud, cloudFiltered, tableInliers); // cloudFiltered now contains no table plane
 
-
-    // down sample before clustering
+    
+    // *Downsampling*
     const float voxelSize = 0.005;
     pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloudDownSampled(new pcl::PointCloud<pcl::PointXYZRGBA>);
     pcl::VoxelGrid<pcl::PointXYZRGBA> voxFilter;
@@ -98,16 +96,14 @@ int main(int argc, char** argv) {
     voxFilter.setLeafSize(static_cast<float>(voxelSize), static_cast<float>(voxelSize), static_cast<float>(voxelSize));
     voxFilter.filter(*cloudDownSampled);
 
-    
+
+    // *Clustering*
     const float clusterDistance = 0.01; // claiming that all boxes we are looking for are a minimum of 1cm apart
     int minClusterSize = 220; // a cluster less than 220 pts wont be returned
     int maxClusterSize = 100000;
-
-
     // We have a vector of vectors of indicies. If we find 3 clusters in our pc, cluster indicies will have
     // 3 elements, and each one of those elements is a list of integer indices pointing back to the original cloud
     std::vector<pcl::PointIndices> clusterIndices;
-
     pcl::search::KdTree<pcl::PointXYZRGBA>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZRGBA>);
     tree->setInputCloud(cloudDownSampled);
 
@@ -120,8 +116,8 @@ int main(int argc, char** argv) {
     ec.setInputCloud(cloudDownSampled);
     ec.extract(clusterIndices);
 
-    
 
+    // *Process Clusters*
     // At this point each of our boxes are identified as a cluster within clusterIndices and all noise is filtered out,
     // Iterate through each of our identified clusters
     for(int i = 0; i < clusterIndices.size(); i++) {
@@ -180,19 +176,10 @@ int main(int argc, char** argv) {
         float width = maxY - minY;
         float height = distanceToTable - planeHeight;
 
-        std::cout << '\n' << std::endl;
-        std::cout << "cluster indices size: " << clusterIndices.size() << std::endl;
-        std::cout << "clusterInliers size: " << clusterInliers->indices.size() << std::endl;
-        std::cout << "resultantInliers size: " << resultantInliers->indices.size() << std::endl;
-        std::cout << "Min X: " << minX << std::endl;
-        std::cout << "Max X: " << maxX << std::endl;
-        std::cout << "Min Y: " << minY << std::endl;
-        std::cout << "Max Y: " << maxY << std::endl;
         std::cout << "BOX " << i+1 << ": " << length << " " << width << " " << height << std::endl;
-        std::cout << '\n' << std::endl;
     }
 
-    
+    // Notes on cluster thresholds
     // 1 biggest is 570, smallest is 224, all noise is smaller than our smallest box
     // 2 big: 526, no other noise identified
     // 3 biggest is 536, smallest is 274, all noise is smaller than our smaller box
